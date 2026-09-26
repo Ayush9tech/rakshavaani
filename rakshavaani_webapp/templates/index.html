@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RakshaVaani — Voice Clone Detector</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --border: #2a2e38;
+    --text: #e7e9ee;
+    --muted: #8a8f9c;
+    --accent: #4f7cff;
+    --real: #35c37a;
+    --spoof: #ff5a5a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: radial-gradient(circle at top, #1a1d26, var(--bg));
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .wrap { max-width: 560px; width: 100%; }
+  h1 { font-size: 1.6rem; margin-bottom: 2px; }
+  .tag { color: var(--muted); font-size: 0.9rem; margin-bottom: 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px;
+    margin-bottom: 18px;
+  }
+  .card h2 { font-size: 1rem; margin: 0 0 14px; color: var(--muted); font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
+  button {
+    font-family: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 18px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-stop { background: var(--spoof); color: white; }
+  .btn-primary:hover:not(:disabled), .btn-stop:hover:not(:disabled) { opacity: 0.85; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .timer { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.9rem; }
+  input[type="file"] {
+    color: var(--muted);
+    font-size: 0.85rem;
+    width: 100%;
+  }
+  .upload-row { display: flex; gap: 10px; margin-top: 12px; }
+  .result {
+    margin-top: 16px;
+    padding: 16px;
+    border-radius: 10px;
+    display: none;
+  }
+  .result.show { display: block; }
+  .result.real { background: rgba(53,195,122,0.12); border: 1px solid var(--real); }
+  .result.spoof { background: rgba(255,90,90,0.12); border: 1px solid var(--spoof); }
+  .verdict { font-size: 1.15rem; font-weight: 700; }
+  .verdict.real { color: var(--real); }
+  .verdict.spoof { color: var(--spoof); }
+  .meta { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+  .status { color: var(--muted); font-size: 0.85rem; margin-top: 10px; min-height: 18px; }
+  .pulse {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--spoof);
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🛡️ RakshaVaani</h1>
+  <div class="tag">Real-time AI voice-clone detector — record or upload a clip</div>
+
+  <div class="card">
+    <h2>Record Voice</h2>
+    <div class="row">
+      <button id="recordBtn" class="btn-primary">● Start Recording</button>
+      <span id="timer" class="timer"></span>
+    </div>
+    <div id="recordStatus" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>Or Upload a File</h2>
+    <div class="upload-row">
+      <input type="file" id="fileInput" accept="audio/*">
+      <button id="uploadBtn" class="btn-primary">Analyze</button>
+    </div>
+  </div>
+
+  <div id="result" class="result">
+    <div id="verdictText" class="verdict"></div>
+    <div id="metaText" class="meta"></div>
+  </div>
+</div>
+
+<script>
+let audioContext, mediaStream, processor, source;
+let recording = false;
+let leftChannel = [];
+let recordingLength = 0;
+let sampleRate = 44100;
+let timerInterval, secondsElapsed = 0;
+
+const recordBtn = document.getElementById("recordBtn");
+const timerEl = document.getElementById("timer");
+const recordStatus = document.getElementById("recordStatus");
+const resultEl = document.getElementById("result");
+const verdictText = document.getElementById("verdictText");
+const metaText = document.getElementById("metaText");
+
+recordBtn.addEventListener("click", async () => {
+  if (!recording) {
+    await startRecording();
+  } else {
+    stopRecordingAndSend();
+  }
+});
+
+async function startRecording() {
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    recordStatus.textContent = "Microphone permission denied.";
+    return;
+  }
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  sampleRate = audioContext.sampleRate;
+  source = audioContext.createMediaStreamSource(mediaStream);
+  processor = audioContext.createScriptProcessor(4096, 1, 1);
+  leftChannel = [];
+  recordingLength = 0;
+
+  processor.onaudioprocess = (e) => {
+    const samples = e.inputBuffer.getChannelData(0);
+    leftChannel.push(new Float32Array(samples));
+    recordingLength += samples.length;
+  };
+  source.connect(processor);
+  processor.connect(audioContext.destination);
+
+  recording = true;
+  recordBtn.textContent = "■ Stop Recording";
+  recordBtn.classList.remove("btn-primary");
+  recordBtn.classList.add("btn-stop");
+  recordStatus.innerHTML = '<span class="pulse" style="display:inline-block;margin-right:6px;"></span>Listening...';
+  secondsElapsed = 0;
+  timerEl.textContent = "0:00";
+  timerInterval = setInterval(() => {
+    secondsElapsed++;
+    const m = Math.floor(secondsElapsed / 60);
+    const s = String(secondsElapsed % 60).padStart(2, "0");
+    timerEl.textContent = `${m}:${s}`;
+  }, 1000);
+}
+
+async function stopRecordingAndSend() {
+  recording = false;
+  clearInterval(timerInterval);
+  processor.disconnect();
+  source.disconnect();
+  mediaStream.getTracks().forEach(t => t.stop());
+
+  recordBtn.textContent = "● Start Recording";
+  recordBtn.classList.remove("btn-stop");
+  recordBtn.classList.add("btn-primary");
+  recordStatus.textContent = "Processing...";
+
+  const merged = mergeBuffers(leftChannel, recordingLength);
+  const wavBlob = encodeWAV(merged, sampleRate);
+  await sendAudio(wavBlob, "recording.wav");
+  recordStatus.textContent = "";
+}
+
+function mergeBuffers(channelBuffer, length) {
+  const result = new Float32Array(length);
+  let offset = 0;
+  for (let i = 0; i < channelBuffer.length; i++) {
+    result.set(channelBuffer[i], offset);
+    offset += channelBuffer[i].length;
+  }
+  return result;
+}
+
+function encodeWAV(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i));
+  }
+  function floatTo16BitPCM(output, offset, input) {
+    for (let i = 0; i < input.length; i++, offset += 2) {
+      let s = Math.max(-1, Math.min(1, input[i]));
+      output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+  }
+  writeString(view, 0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(view, 8, "WAVE");
+  writeString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  floatTo16BitPCM(view, 44, samples);
+  return new Blob([view], { type: "audio/wav" });
+}
+
+async function sendAudio(blob, filename) {
+  const formData = new FormData();
+  formData.append("audio", blob, filename);
+  try {
+    const res = await fetch("/predict", { method: "POST", body: formData });
+    const data = await res.json();
+    if (data.error) {
+      showResult(null, data.error);
+      return;
+    }
+    showResult(data);
+  } catch (e) {
+    showResult(null, "Request failed: " + e.message);
+  }
+}
+
+function showResult(data, errorMsg) {
+  resultEl.classList.add("show");
+  if (errorMsg) {
+    resultEl.className = "result show";
+    verdictText.textContent = "Error";
+    metaText.textContent = errorMsg;
+    return;
+  }
+  const isReal = data.verdict === "real";
+  resultEl.className = "result show " + (isReal ? "real" : "spoof");
+  verdictText.className = "verdict " + (isReal ? "real" : "spoof");
+  verdictText.textContent = isReal ? "✅ LIKELY REAL VOICE" : "🚨 LIKELY AI-CLONED VOICE";
+  metaText.textContent = `Confidence: ${data.confidence}%  ·  Inference time: ${data.inference_time}s`;
+}
+
+document.getElementById("uploadBtn").addEventListener("click", async () => {
+  const fileInput = document.getElementById("fileInput");
+  if (!fileInput.files.length) return;
+  const file = fileInput.files[0];
+  document.getElementById("uploadBtn").disabled = true;
+  await sendAudio(file, file.name);
+  document.getElementById("uploadBtn").disabled = false;
+});
+</script>
+</body>
+</html>

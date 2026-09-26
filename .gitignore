@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+_tmp_upload.wav
+.ipynb_checkpoints/
+.virtual_documents/
